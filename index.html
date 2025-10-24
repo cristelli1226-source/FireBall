@@ -311,14 +311,19 @@
     }
 
     function startGame(){
-      state.running = true
-      document.getElementById('overlayBox').style.display = 'none'
-      if(!state.player) state.player = new Player()
-      state.player.setPos()
-      resize()
-      lastTime = performance.now()
-      requestAnimationFrame(update)
-    }
+		state.running = true
+		document.getElementById('overlayBox').style.display = 'none'
+  
+		if(!state.player){
+			state.player = new Player()
+			state.player.setPos()
+	}
+  
+		resize()
+		lastTime = performance.now()
+		requestAnimationFrame(update)
+	}
+
 
     // init
     resetGame()
