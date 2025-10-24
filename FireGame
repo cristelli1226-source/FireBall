@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Space Flamezera — Mini Jogo (HTML + JS)</title>
+  <style>
+    :root{ --bg:#0b1020; --player:#ff6a00; --enemy:#ff3b6e; --bullet:#ffd166; --ui:#cbd5e1 }
+    html,body{ height:100%; margin:0; font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial }
+    body{ display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#02030a 0%, var(--bg) 60%); color:var(--ui) }
+    .wrap{ width:100%; max-width:980px; padding:18px; box-sizing:border-box }
+    header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px }
+    h1{ font-size:18px; margin:0; color:white }
+    #hud{ display:flex; gap:10px; align-items:center }
+    button{ background:transparent; color:var(--ui); border:1px solid rgba(255,255,255,0.08); padding:8px 10px; border-radius:10px; cursor:pointer }
+    button.primary{ background:linear-gradient(90deg,#ff7a00,#ff3b6e); color:white; border:none }
+    canvas{ display:block; width:100%; height:620px; background:radial-gradient(circle at 30% 10%, rgba(255,255,255,0.02), transparent 5%), transparent; border-radius:12px; box-shadow:0 10px 30px rgba(2,6,23,0.6) }
+    .controls{ margin-top:10px; display:flex; gap:8px; align-items:center }
+    .hint{ font-size:13px; opacity:0.9 }
+    .overlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none }
+    .panel{ pointer-events:auto; background:rgba(2,6,23,0.7); padding:18px; border-radius:12px; text-align:center }
+    .big{ font-size:34px; margin:0 0 8px 0 }
+    .small{ font-size:14px; margin:0 }
+    footer{ margin-top:10px; font-size:13px; color:#9aa4b2 }
+    /* mobile touch buttons */
+    .touch-row{ display:none; gap:6px; margin-top:8px }
+    .touch-btn{ padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02) }
+    @media (max-width:720px){ canvas{ height:480px } .touch-row{ display:flex } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Space Flamezera</h1>
+      <div id="hud">
+        <div>Score: <strong id="score">0</strong></div>
+        <div>Vidas: <strong id="lives">3</strong></div>
+        <button id="startBtn" class="primary">Iniciar</button>
+        <button id="restartBtn">Reiniciar</button>
+      </div>
+    </header>
+
+    <div style="position:relative">
+      <canvas id="game"></canvas>
+      <div class="overlay" id="overlayBox" style="display:none">
+        <div class="panel" id="panel">
+          <div class="big" id="panelTitle">Pronto para jogar?</div>
+          <div class="small">Use ← → (ou toque) para mover. Espaço ou toque em 'Atirar' para disparar. Boa sorte!</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="hint">Controles: ← → / A D — Espaço para atirar</div>
+      <div class="touch-row">
+        <button class="touch-btn" id="touchLeft">◀</button>
+        <button class="touch-btn" id="touchFire">FIRE</button>
+        <button class="touch-btn" id="touchRight">▶</button>
+      </div>
+    </div>
+
+    <footer>Salve o recorde — ideias: power-ups, inimigos especiais, níveis. Quer que eu adicione?</footer>
+  </div>
+
+  <script>
+    // Space Flamezera - Single file HTML5 Canvas game
+    // Autor: ChatGPT (modelo) — adaptado pro Junão
+
+    const canvas = document.getElementById('game')
+    const ctx = canvas.getContext('2d')
+    let W, H, lastTime = 0
+
+    function resize(){
+      const ratio = devicePixelRatio || 1
+      W = canvas.clientWidth
+      H = canvas.clientHeight
+      canvas.width = Math.floor(W * ratio)
+      canvas.height = Math.floor(H * ratio)
+      ctx.setTransform(ratio,0,0,ratio,0,0)
+    }
+    window.addEventListener('resize', resize)
+
+    // Game state
+    const state = {
+      running: false,
+      score: 0,
+      lives: 3,
+      bullets: [],
+      enemies: [],
+      spawnTimer: 0,
+      keys: {},
+      player: null
+    }
+
+    // Player
+    class Player{
+      constructor(){
+        this.w = 48; this.h = 20
+        this.x = 0; this.y = 0
+        this.speed = 360 // px/sec
+        this.cooldown = 0
+      }
+      setPos(){ this.x = W/2; this.y = H - 60 }
+      update(dt){
+        if(state.keys['ArrowLeft'] || state.keys['a']) this.x -= this.speed * dt
+        if(state.keys['ArrowRight'] || state.keys['d']) this.x += this.speed * dt
+        // clamp
+        this.x = Math.max(this.w/2, Math.min(W - this.w/2, this.x))
+        if(this.cooldown > 0) this.cooldown -= dt
+      }
+      draw(){
+        // flame-themed triangular ship
+        ctx.save()
+        ctx.translate(this.x, this.y)
+        // body
+        ctx.beginPath()
+        ctx.moveTo(0,-this.h)
+        ctx.lineTo(this.w/2, this.h)
+        ctx.lineTo(-this.w/2, this.h)
+        ctx.closePath()
+        const g = ctx.createLinearGradient(0,-this.h,0,this.h)
+        g.addColorStop(0,'#fff6e1')
+        g.addColorStop(0.5,'#ffb86b')
+        g.addColorStop(1,'#ff3b6e')
+        ctx.fillStyle = g
+        ctx.fill()
+        // cockpit
+        ctx.beginPath(); ctx.ellipse(0,-6,8,6,0,0,Math.PI*2); ctx.fillStyle='rgba(10,12,20,0.6)'; ctx.fill()
+        ctx.restore()
+      }
+      shoot(){
+        if(this.cooldown > 0) return
+        this.cooldown = 0.2
+        state.bullets.push({x:this.x, y:this.y - this.h - 6, vy:-700, w:4, h:10})
+      }
+    }
+
+    // Enemies
+    function spawnEnemy(){
+      const size = 26 + Math.random()*28
+      const x = size/2 + Math.random()*(W - size)
+      const enemy = { x, y:-30, w:size, h:size, vy: 60 + Math.random()*120, hp: Math.random()>0.85?3:1 }
+      state.enemies.push(enemy)
+    }
+
+    // Collisions
+    function rectsCollide(a,b){
+      return a.x - a.w/2 < b.x + b.w/2 && a.x + a.w/2 > b.x - b.w/2 && a.y - a.h/2 < b.y + b.h/2 && a.y + a.h/2 > b.y - b.h/2
+    }
+
+    // Game loop
+    function update(ts){
+      if(!state.running){ lastTime = ts; requestAnimationFrame(update); return }
+      const dt = Math.min((ts - lastTime)/1000, 0.05)
+      lastTime = ts
+
+      state.player.update(dt)
+
+      // spawn
+      state.spawnTimer -= dt
+      if(state.spawnTimer <= 0){ spawnEnemy(); state.spawnTimer = 0.6 - Math.min(0.45, state.score/200) * Math.random() }
+
+      // bullets
+      for(let i=state.bullets.length-1;i>=0;i--){
+        const b = state.bullets[i]
+        b.y += b.vy * dt
+        if(b.y < -20) state.bullets.splice(i,1)
+      }
+
+      // enemies
+      for(let i=state.enemies.length-1;i>=0;i--){
+        const e = state.enemies[i]
+        e.y += e.vy * dt
+        // collision with bullets
+        for(let j=state.bullets.length-1;j>=0;j--){
+          const b = state.bullets[j]
+          const be = {x:b.x, y:b.y, w:b.w, h:b.h}
+          const ee = {x:e.x, y:e.y, w:e.w, h:e.h}
+          if(rectsCollide(be,ee)){
+            state.bullets.splice(j,1)
+            e.hp -= 1
+            if(e.hp <= 0){
+              state.enemies.splice(i,1)
+              state.score += 10
+              document.getElementById('score').textContent = state.score
+            }
+            break
+          }
+        }
+        // enemy reaches bottom -> player hit
+        if(e.y - e.h/2 > H + 10){
+          state.enemies.splice(i,1)
+          state.lives -= 1
+          document.getElementById('lives').textContent = state.lives
+          if(state.lives <= 0) gameOver()
+        }
+      }
+
+      // enemy hit player
+      const pbox = {x:state.player.x, y:state.player.y, w:state.player.w, h:state.player.h}
+      for(let i=state.enemies.length-1;i>=0;i--){
+        if(rectsCollide(pbox, state.enemies[i])){
+          state.enemies.splice(i,1)
+          state.lives -= 1
+          document.getElementById('lives').textContent = state.lives
+          if(state.lives <= 0) gameOver()
+        }
+      }
+
+      // auto fire
+      if(state.keys[' '] || state.keys['Spacebar'] || state.keys['Space']) state.player.shoot()
+
+      // draw
+      render()
+      requestAnimationFrame(update)
+    }
+
+    function render(){
+      ctx.clearRect(0,0,W,H)
+      // starfield
+      drawStars()
+      // player
+      state.player.draw()
+      // bullets
+      for(const b of state.bullets){
+        ctx.fillStyle = 'rgba(255,209,102,0.98)'
+        ctx.fillRect(b.x - b.w/2, b.y - b.h/2, b.w, b.h)
+      }
+      // enemies
+      for(const e of state.enemies){
+        drawEnemy(e)
+      }
+
+      // HUD inside canvas
+      ctx.save()
+      ctx.fillStyle='rgba(255,255,255,0.06)'
+      ctx.fillRect(8,8,150,44)
+      ctx.fillStyle='white'
+      ctx.font='14px sans-serif'
+      ctx.fillText('Score: ' + state.score, 16, 28)
+      ctx.fillText('Vidas: ' + state.lives, 16, 46)
+      ctx.restore()
+    }
+
+    // simple starfield drawn procedurally
+    let starSeed = 0
+    function drawStars(){
+      const count = Math.max(20, Math.floor(W/30))
+      for(let i=0;i<count;i++){
+        const x = (Math.sin(i*12.9898 + starSeed) * 43758.5453) % 1 * W
+        const y = (Math.cos(i*78.233 + starSeed) * 43758.5453) % 1 * H
+        const r = 0.6 + ((i%3)/2)
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.06 + (i%5)/30) +')'
+        ctx.fillRect(x,y,r,r)
+      }
+      starSeed += 0.01
+    }
+
+    function drawEnemy(e){
+      ctx.save()
+      ctx.translate(e.x, e.y)
+      // pulsating blob
+      const pulse = Math.sin((e.y + performance.now()/80)/40) * 0.08 + 1
+      const radius = e.w/2 * pulse
+      const g = ctx.createRadialGradient(0,0,radius*0.1, 0,0,radius)
+      g.addColorStop(0,'#fff')
+      g.addColorStop(0.2,'#ff8fa0')
+      g.addColorStop(1,'#ff3b6e')
+      ctx.beginPath(); ctx.arc(0,0,radius,0,Math.PI*2); ctx.fillStyle=g; ctx.fill()
+      // hp indicator
+      if(e.hp && e.hp > 1){
+        ctx.fillStyle='rgba(0,0,0,0.25)'
+        ctx.fillRect(-radius, radius+6, radius*2, 6)
+        ctx.fillStyle='rgba(255,255,255,0.9)'
+        ctx.fillRect(-radius, radius+6, (e.hp/3)*(radius*2), 6)
+      }
+      ctx.restore()
+    }
+
+    function gameOver(){
+      state.running = false
+      document.getElementById('panelTitle').textContent = 'Game Over'
+      document.getElementById('overlayBox').style.display = 'flex'
+    }
+
+    // controls
+    window.addEventListener('keydown', e => { state.keys[e.key] = true })
+    window.addEventListener('keyup', e => { state.keys[e.key] = false })
+
+    document.getElementById('startBtn').addEventListener('click', ()=>{
+      startGame()
+    })
+    document.getElementById('restartBtn').addEventListener('click', ()=>{
+      resetGame(); startGame()
+    })
+
+    // touch
+    document.getElementById('touchLeft').addEventListener('touchstart', (e)=>{ e.preventDefault(); state.keys['ArrowLeft']=true })
+    document.getElementById('touchLeft').addEventListener('touchend', (e)=>{ e.preventDefault(); state.keys['ArrowLeft']=false })
+    document.getElementById('touchRight').addEventListener('touchstart', (e)=>{ e.preventDefault(); state.keys['ArrowRight']=true })
+    document.getElementById('touchRight').addEventListener('touchend', (e)=>{ e.preventDefault(); state.keys['ArrowRight']=false })
+    document.getElementById('touchFire').addEventListener('touchstart', (e)=>{ e.preventDefault(); state.keys[' ']=true })
+    document.getElementById('touchFire').addEventListener('touchend', (e)=>{ e.preventDefault(); state.keys[' ']=false })
+
+    function resetGame(){
+      state.score = 0; state.lives = 3; state.bullets = []; state.enemies = []; state.spawnTimer = 0
+      document.getElementById('score').textContent = state.score
+      document.getElementById('lives').textContent = state.lives
+      document.getElementById('overlayBox').style.display = 'flex'
+      document.getElementById('panelTitle').textContent = 'Pronto para jogar?'
+    }
+
+    function startGame(){
+      state.running = true
+      document.getElementById('overlayBox').style.display = 'none'
+      if(!state.player) state.player = new Player()
+      state.player.setPos()
+      resize()
+      lastTime = performance.now()
+      requestAnimationFrame(update)
+    }
+
+    // init
+    resetGame()
+    // kick resize once
+    setTimeout(resize,50)
+
+    // small polish: pause when tab hidden
+    document.addEventListener('visibilitychange', ()=>{ if(document.hidden) state.running = false })
+
+    // For keyboard-friendly quick start: press Enter to start
+    window.addEventListener('keydown', e=>{ if(e.key === 'Enter' && !state.running) startGame() })
+  </script>
+</body>
+</html>
